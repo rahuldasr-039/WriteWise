@@ -98,46 +98,59 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
       );
     }
 
-    const message =
+    const rawMessage =
       err instanceof Error ? err.message : "Something went wrong while checking your text.";
+
+    // Unpack inner error message if wrapped by checkSegmentWithRetry
+    const innerMessage = rawMessage
+      .replace(/^Failed to obtain valid check results after retry:\s*/i, "")
+      .trim();
+    const lower = (rawMessage + " " + innerMessage).toLowerCase();
 
     let statusCode = 500;
     let errorCode = "CHECK_FAILED";
     let userMessage = "Something went wrong while checking your text.";
 
-    if (message.includes("LLM_API_KEY") || message.includes("Missing LLM_API_KEY")) {
-      userMessage = "Gemini API key is not configured on the server. Please set LLM_API_KEY in .env.local.";
+    if (lower.includes("llm_api_key") || lower.includes("missing llm_api_key")) {
+      userMessage = "Gemini API key is not configured on the server. Please set LLM_API_KEY in your environment variables.";
       errorCode = "CONFIG_ERROR";
       statusCode = 500;
     } else if (
-      message.includes("API_KEY_INVALID") ||
-      message.includes("API key not valid") ||
-      message.toLowerCase().includes("invalid api key")
+      lower.includes("api_key_invalid") ||
+      lower.includes("api key not valid") ||
+      lower.includes("invalid api key") ||
+      lower.includes("api_key_expired") ||
+      lower.includes("unauthenticated")
     ) {
-      userMessage = "Invalid Gemini API key. Please check your credentials in .env.local.";
+      userMessage = "Invalid Gemini API key. Please verify LLM_API_KEY in your environment variables.";
       errorCode = "INVALID_API_KEY";
       statusCode = 401;
     } else if (
-      message.includes("RESOURCE_EXHAUSTED") ||
-      message.toLowerCase().includes("quota") ||
-      message.toLowerCase().includes("rate limit")
+      lower.includes("resource_exhausted") ||
+      lower.includes("quota") ||
+      lower.includes("rate limit") ||
+      lower.includes("429")
     ) {
       userMessage = "Gemini API rate limit or quota exceeded. Please wait a moment and try again.";
       errorCode = "RATE_LIMITED";
       statusCode = 429;
-    } else if (message.includes("Failed to obtain valid check results after retry")) {
-      userMessage = "The AI provider returned an unexpected data format. Please try again.";
-      errorCode = "VALIDATION_FAILED";
-      statusCode = 502;
+    } else if (lower.includes("not found") || lower.includes("is not supported")) {
+      userMessage = "Configured AI model was not found or is unavailable. Please verify LLM_MODEL.";
+      errorCode = "MODEL_NOT_FOUND";
+      statusCode = 404;
     } else if (
-      message.toLowerCase().includes("fetch failed") ||
-      message.toLowerCase().includes("network") ||
-      message.toLowerCase().includes("econnrefused") ||
-      message.toLowerCase().includes("etimedout")
+      lower.includes("fetch failed") ||
+      lower.includes("network") ||
+      lower.includes("econnrefused") ||
+      lower.includes("etimedout")
     ) {
       userMessage = "Network error connecting to Gemini API. Please check your connection.";
       errorCode = "NETWORK_ERROR";
       statusCode = 503;
+    } else if (lower.includes("failed to obtain valid check results after retry")) {
+      userMessage = "The AI provider returned an unexpected data format. Please try again.";
+      errorCode = "VALIDATION_FAILED";
+      statusCode = 502;
     }
 
     return NextResponse.json(

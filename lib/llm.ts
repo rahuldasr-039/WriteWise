@@ -103,7 +103,7 @@ async function callLLMProvider(
       throw new Error("Gemini returned an empty response.");
     }
 
-    return JSON.parse(responseText);
+    return cleanAndParseJson(responseText);
   } else if (provider === "openai-compatible") {
     const client = new OpenAI({
       apiKey,
@@ -128,12 +128,109 @@ async function callLLMProvider(
       throw new Error("Empty response from OpenAI-compatible provider.");
     }
 
-    return JSON.parse(content);
+    return cleanAndParseJson(content);
   } else {
     throw new Error(
       `Unsupported LLM_PROVIDER: "${provider}". Expected "gemini" or "openai-compatible".`
     );
   }
+}
+
+/**
+ * Safely parse JSON from LLM responses, stripping any markdown code fences.
+ */
+function cleanAndParseJson(text: string): unknown {
+  let cleaned = text.trim();
+  if (cleaned.startsWith("```")) {
+    cleaned = cleaned
+      .replace(/^```(?:json)?\s*/i, "")
+      .replace(/\s*```$/i, "")
+      .trim();
+  }
+
+  try {
+    return JSON.parse(cleaned);
+  } catch {
+    const start = cleaned.indexOf("{");
+    const end = cleaned.lastIndexOf("}");
+    if (start !== -1 && end !== -1 && end > start) {
+      return JSON.parse(cleaned.substring(start, end + 1));
+    }
+    throw new Error(`Failed to parse AI JSON response: ${cleaned.slice(0, 120)}`);
+  }
+}
+
+/**
+ * Sanitize raw LLM responses so minor model imperfections (e.g. 26-word explanations,
+ * floating point scores, uppercase category names) conform cleanly to schema.
+ */
+function sanitizeLLMResponse(data: unknown): unknown {
+  if (!data || typeof data !== "object") return data;
+  const obj = data as Record<string, unknown>;
+
+  if (typeof obj.language !== "string" || !obj.language.trim()) {
+    obj.language = "English";
+  }
+
+  if (typeof obj.correctedText !== "string") {
+    obj.correctedText = String(obj.correctedText || "");
+  }
+
+  if (Array.isArray(obj.issues)) {
+    obj.issues = obj.issues
+      .filter((item): item is Record<string, unknown> => Boolean(item && typeof item === "object"))
+      .map((item) => {
+        const issue = { ...item };
+
+        if (typeof issue.original !== "string" || !issue.original) {
+          issue.original =
+            typeof issue.context === "string" && issue.context.trim()
+              ? issue.context.trim().split(/\s+/).slice(-1)[0] || " "
+              : " ";
+        }
+
+        if (typeof issue.suggestion !== "string") {
+          issue.suggestion = String(issue.suggestion || "");
+        }
+
+        const validCategories = ["spelling", "grammar", "punctuation", "style"];
+        if (typeof issue.category === "string") {
+          const lower = issue.category.toLowerCase().trim();
+          issue.category = validCategories.includes(lower) ? lower : "grammar";
+        } else {
+          issue.category = "grammar";
+        }
+
+        if (typeof issue.explanation === "string") {
+          const words = issue.explanation.trim().split(/\s+/).filter(Boolean);
+          if (words.length > 25) {
+            issue.explanation = words.slice(0, 25).join(" ");
+          } else if (words.length === 0) {
+            issue.explanation = "Suggested correction.";
+          } else {
+            issue.explanation = words.join(" ");
+          }
+        } else {
+          issue.explanation = "Suggested correction.";
+        }
+
+        if (typeof issue.context !== "string") {
+          issue.context = "";
+        }
+
+        return issue;
+      });
+  } else {
+    obj.issues = [];
+  }
+
+  if (typeof obj.score === "number" && !isNaN(obj.score)) {
+    obj.score = Math.round(Math.min(100, Math.max(0, obj.score)));
+  } else {
+    obj.score = 100;
+  }
+
+  return obj;
 }
 
 /**
@@ -149,10 +246,27 @@ async function checkSegmentWithRetry(
   for (let attempt = 1; attempt <= 2; attempt++) {
     try {
       const raw = await callLLMProvider(text, mode, signal);
-      const parsed = LLMResponseSchema.parse(raw);
+      const sanitized = sanitizeLLMResponse(raw);
+      const parsed = LLMResponseSchema.parse(sanitized);
       return parsed;
     } catch (err: unknown) {
-      lastError = err instanceof Error ? err : new Error(String(err));
+      const error = err instanceof Error ? err : new Error(String(err));
+      lastError = error;
+
+      // Fail fast on authentication, quota, model not found, or config errors
+      const msg = error.message.toLowerCase();
+      if (
+        msg.includes("api_key") ||
+        msg.includes("api key") ||
+        msg.includes("quota") ||
+        msg.includes("resource_exhausted") ||
+        msg.includes("not found") ||
+        msg.includes("unauthorized") ||
+        msg.includes("unsupported llm_provider")
+      ) {
+        throw error;
+      }
+
       if (attempt === 1) {
         // Wait 300ms before retrying once
         await new Promise((res) => setTimeout(res, 300));
