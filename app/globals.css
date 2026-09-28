@@ -1,0 +1,60 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  :root {
+    --bg-main: #f8fafc;
+    --bg-card: #ffffff;
+    --text-main: #0f172a;
+    --text-muted: #64748b;
+    --border-color: #e2e8f0;
+  }
+
+  .dark {
+    --bg-main: #090d16;
+    --bg-card: #131b2e;
+    --text-main: #f8fafc;
+    --text-muted: #94a3b8;
+    --border-color: #1e293b;
+  }
+
+  body {
+    background-color: var(--bg-main);
+    color: var(--text-main);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, "Helvetica Neue", Arial, sans-serif;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+}
+
+/* Accessible, distinct category underlines (color + style pattern) */
+.issue-underline-spelling {
+  text-decoration: underline wavy #ef4444;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 2px;
+}
+
+.issue-underline-grammar {
+  text-decoration: underline solid #3b82f6;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 2px;
+}
+
+.issue-underline-punctuation {
+  text-decoration: underline dotted #f97316;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 2.5px;
+}
+
+.issue-underline-style {
+  text-decoration: underline dashed #a855f7;
+  text-underline-offset: 4px;
+  text-decoration-thickness: 2px;
+}
+
+/* Custom focus ring */
+:focus-visible {
+  outline: 2px solid #2563eb;
+  outline-offset: 2px;
+}
