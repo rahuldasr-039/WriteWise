@@ -1,4 +1,4 @@
-import Anthropic from "@anthropic-ai/sdk";
+import { GoogleGenAI, Type, Schema } from "@google/genai";
 import OpenAI from "openai";
 import { CheckMode, LLMResponse, LLMResponseSchema } from "./schema";
 import { buildSystemPrompt, buildUserPrompt } from "./prompt";
@@ -8,58 +8,54 @@ export interface CheckOptions {
   signal?: AbortSignal;
 }
 
-const TOOL_SCHEMA: Anthropic.Tool = {
-  name: "submit_writing_check",
-  description: "Submit the structured writing check results",
-  input_schema: {
-    type: "object",
-    properties: {
-      language: {
-        type: "string",
-        description: "Detected natural language of the input (e.g. English, Spanish)",
-      },
-      correctedText: {
-        type: "string",
-        description: "The complete text with all corrections and adjustments applied",
-      },
-      issues: {
-        type: "array",
-        items: {
-          type: "object",
-          properties: {
-            original: {
-              type: "string",
-              description: "Exact substring in original text",
-            },
-            suggestion: {
-              type: "string",
-              description: "Suggested replacement",
-            },
-            category: {
-              type: "string",
-              enum: ["spelling", "grammar", "punctuation", "style"],
-            },
-            explanation: {
-              type: "string",
-              description: "Explanation in 25 words or fewer",
-            },
-            context: {
-              type: "string",
-              description: "Surrounding ~30 chars around the issue",
-            },
+const GEMINI_RESPONSE_SCHEMA: Schema = {
+  type: Type.OBJECT,
+  properties: {
+    language: {
+      type: Type.STRING,
+      description: "Detected natural language of the input (e.g. English, Spanish)",
+    },
+    correctedText: {
+      type: Type.STRING,
+      description: "The complete text with all corrections and adjustments applied",
+    },
+    issues: {
+      type: Type.ARRAY,
+      description: "List of detected issues",
+      items: {
+        type: Type.OBJECT,
+        properties: {
+          original: {
+            type: Type.STRING,
+            description: "Exact substring in original text",
           },
-          required: ["original", "suggestion", "category", "explanation", "context"],
+          suggestion: {
+            type: Type.STRING,
+            description: "Suggested replacement",
+          },
+          category: {
+            type: Type.STRING,
+            enum: ["spelling", "grammar", "punctuation", "style"],
+            description: "Issue category",
+          },
+          explanation: {
+            type: Type.STRING,
+            description: "Explanation in 25 words or fewer",
+          },
+          context: {
+            type: Type.STRING,
+            description: "Surrounding ~30 chars around the issue",
+          },
         },
-      },
-      score: {
-        type: "number",
-        minimum: 0,
-        maximum: 100,
-        description: "Quality score from 0 to 100",
+        required: ["original", "suggestion", "category", "explanation", "context"],
       },
     },
-    required: ["language", "correctedText", "issues", "score"],
+    score: {
+      type: Type.INTEGER,
+      description: "Quality score from 0 to 100",
+    },
   },
+  required: ["language", "correctedText", "issues", "score"],
 };
 
 /**
@@ -70,7 +66,7 @@ async function callLLMProvider(
   mode: CheckMode,
   signal?: AbortSignal
 ): Promise<unknown> {
-  const provider = (process.env.LLM_PROVIDER || "anthropic").toLowerCase();
+  const provider = (process.env.LLM_PROVIDER || "gemini").toLowerCase();
   const apiKey = process.env.LLM_API_KEY;
 
   if (!apiKey) {
@@ -82,37 +78,32 @@ async function callLLMProvider(
   const systemPrompt = buildSystemPrompt(mode);
   const userPrompt = buildUserPrompt(text);
 
-  if (provider === "anthropic") {
-    const client = new Anthropic({ apiKey });
-    const model = process.env.LLM_MODEL || "claude-haiku-4-5-20251001";
+  if (provider === "gemini") {
+    const ai = new GoogleGenAI({
+      apiKey,
+      ...(process.env.LLM_BASE_URL
+        ? { httpOptions: { baseUrl: process.env.LLM_BASE_URL } }
+        : {}),
+    });
+    const model = process.env.LLM_MODEL || "gemini-3.8-flash";
 
-    const response = await client.messages.create(
-      {
-        model,
-        max_tokens: 4096,
-        system: systemPrompt,
-        messages: [{ role: "user", content: userPrompt }],
-        tools: [TOOL_SCHEMA],
-        tool_choice: { type: "tool", name: "submit_writing_check" },
+    const response = await ai.models.generateContent({
+      model,
+      contents: userPrompt,
+      config: {
+        systemInstruction: systemPrompt,
+        responseMimeType: "application/json",
+        responseSchema: GEMINI_RESPONSE_SCHEMA,
+        abortSignal: signal,
       },
-      { signal }
-    );
+    });
 
-    const toolUseBlock = response.content.find(
-      (b): b is Anthropic.ToolUseBlock => b.type === "tool_use" && b.name === "submit_writing_check"
-    );
-
-    if (toolUseBlock && typeof toolUseBlock.input === "object") {
-      return toolUseBlock.input;
+    const responseText = response.text?.trim();
+    if (!responseText) {
+      throw new Error("Gemini returned an empty response.");
     }
 
-    // Fallback: Check if response has JSON in text content
-    const textBlock = response.content.find((b) => b.type === "text");
-    if (textBlock && textBlock.type === "text") {
-      return JSON.parse(textBlock.text);
-    }
-
-    throw new Error("Anthropic did not return structured check output.");
+    return JSON.parse(responseText);
   } else if (provider === "openai-compatible") {
     const client = new OpenAI({
       apiKey,
@@ -140,7 +131,7 @@ async function callLLMProvider(
     return JSON.parse(content);
   } else {
     throw new Error(
-      `Unsupported LLM_PROVIDER: "${provider}". Expected "anthropic" or "openai-compatible".`
+      `Unsupported LLM_PROVIDER: "${provider}". Expected "gemini" or "openai-compatible".`
     );
   }
 }

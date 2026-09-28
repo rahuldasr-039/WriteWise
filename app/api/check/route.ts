@@ -101,19 +101,54 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
     const message =
       err instanceof Error ? err.message : "Something went wrong while checking your text.";
 
-    // Prevent leaking raw secrets or stack traces
+    let statusCode = 500;
+    let errorCode = "CHECK_FAILED";
+    let userMessage = "Something went wrong while checking your text.";
+
+    if (message.includes("LLM_API_KEY") || message.includes("Missing LLM_API_KEY")) {
+      userMessage = "Gemini API key is not configured on the server. Please set LLM_API_KEY in .env.local.";
+      errorCode = "CONFIG_ERROR";
+      statusCode = 500;
+    } else if (
+      message.includes("API_KEY_INVALID") ||
+      message.includes("API key not valid") ||
+      message.toLowerCase().includes("invalid api key")
+    ) {
+      userMessage = "Invalid Gemini API key. Please check your credentials in .env.local.";
+      errorCode = "INVALID_API_KEY";
+      statusCode = 401;
+    } else if (
+      message.includes("RESOURCE_EXHAUSTED") ||
+      message.toLowerCase().includes("quota") ||
+      message.toLowerCase().includes("rate limit")
+    ) {
+      userMessage = "Gemini API rate limit or quota exceeded. Please wait a moment and try again.";
+      errorCode = "RATE_LIMITED";
+      statusCode = 429;
+    } else if (message.includes("Failed to obtain valid check results after retry")) {
+      userMessage = "The AI provider returned an unexpected data format. Please try again.";
+      errorCode = "VALIDATION_FAILED";
+      statusCode = 502;
+    } else if (
+      message.toLowerCase().includes("fetch failed") ||
+      message.toLowerCase().includes("network") ||
+      message.toLowerCase().includes("econnrefused") ||
+      message.toLowerCase().includes("etimedout")
+    ) {
+      userMessage = "Network error connecting to Gemini API. Please check your connection.";
+      errorCode = "NETWORK_ERROR";
+      statusCode = 503;
+    }
+
     return NextResponse.json(
       {
         success: false,
         error: {
-          code: "CHECK_FAILED",
-          message:
-            message.includes("LLM_API_KEY")
-              ? "LLM API key is not configured on the server."
-              : "Something went wrong while checking your text.",
+          code: errorCode,
+          message: userMessage,
         },
       },
-      { status: 500 }
+      { status: statusCode }
     );
   }
 }
