@@ -111,11 +111,24 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
     let errorCode = "CHECK_FAILED";
     let userMessage = "Something went wrong while checking your text.";
 
+    const errObj =
+      typeof err === "object" && err !== null ? (err as Record<string, unknown>) : null;
+    const statusNum =
+      typeof errObj?.status === "number" ? errObj.status : Number(errObj?.status);
+    const codeNum =
+      typeof errObj?.code === "number" ? errObj.code : Number(errObj?.code);
+
     if (lower.includes("llm_api_key") || lower.includes("missing llm_api_key")) {
       userMessage = "Gemini API key is not configured on the server. Please set LLM_API_KEY in your environment variables.";
       errorCode = "CONFIG_ERROR";
       statusCode = 500;
     } else if (
+      statusNum === 401 ||
+      statusNum === 402 ||
+      statusNum === 403 ||
+      codeNum === 401 ||
+      codeNum === 402 ||
+      codeNum === 403 ||
       lower.includes("api_key_invalid") ||
       lower.includes("api key not valid") ||
       lower.includes("invalid api key") ||
@@ -126,12 +139,15 @@ export async function POST(req: NextRequest): Promise<NextResponse<ApiResponse>>
       errorCode = "INVALID_API_KEY";
       statusCode = 401;
     } else if (
+      statusNum === 429 ||
+      codeNum === 429 ||
       lower.includes("resource_exhausted") ||
       lower.includes("quota") ||
       lower.includes("rate limit") ||
+      lower.includes("rate_limit") ||
       lower.includes("429")
     ) {
-      userMessage = "Gemini API rate limit or quota exceeded. Please wait a moment and try again.";
+      userMessage = "Gemini quota or rate limit reached. Please wait a moment and try again.";
       errorCode = "RATE_LIMITED";
       statusCode = 429;
     } else if (lower.includes("not found") || lower.includes("is not supported")) {

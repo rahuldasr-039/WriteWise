@@ -234,7 +234,97 @@ function sanitizeLLMResponse(data: unknown): unknown {
 }
 
 /**
- * Execute a check with a single retry if schema validation fails.
+ * Detect whether an error represents a non-retryable rate limit, quota exhaustion,
+ * or authentication/authorization failure from the LLM provider.
+ */
+export function isNonRetryableError(err: unknown): boolean {
+  if (!err) return false;
+
+  // Inspect error object properties safely (SDK errors like ApiError, GoogleGenAI errors, HTTP responses)
+  if (typeof err === "object") {
+    const errorObj = err as Record<string, unknown>;
+
+    // Numeric or string status code (e.g. error.status === 429, 401, 402, 403)
+    const status =
+      typeof errorObj.status === "number" ? errorObj.status : Number(errorObj.status);
+    if (
+      !isNaN(status) &&
+      (status === 429 || status === 401 || status === 402 || status === 403)
+    ) {
+      return true;
+    }
+
+    // Code property (e.g. error.code === 429 or "RESOURCE_EXHAUSTED")
+    const code = typeof errorObj.code === "number" ? errorObj.code : Number(errorObj.code);
+    if (!isNaN(code) && (code === 429 || code === 401 || code === 402 || code === 403)) {
+      return true;
+    }
+
+    if (typeof errorObj.code === "string") {
+      const lowerCode = errorObj.code.toLowerCase();
+      if (
+        lowerCode.includes("429") ||
+        lowerCode.includes("resource_exhausted") ||
+        lowerCode.includes("quota") ||
+        lowerCode.includes("rate_limit") ||
+        lowerCode.includes("rate limit") ||
+        lowerCode.includes("401") ||
+        lowerCode.includes("402") ||
+        lowerCode.includes("403")
+      ) {
+        return true;
+      }
+    }
+
+    // errorDetails property
+    if (errorObj.errorDetails) {
+      const detailsStr =
+        typeof errorObj.errorDetails === "string"
+          ? errorObj.errorDetails
+          : JSON.stringify(errorObj.errorDetails);
+      const lowerDetails = detailsStr.toLowerCase();
+      if (
+        lowerDetails.includes("429") ||
+        lowerDetails.includes("resource_exhausted") ||
+        lowerDetails.includes("quota") ||
+        lowerDetails.includes("rate limit") ||
+        lowerDetails.includes("rate_limit") ||
+        lowerDetails.includes("401") ||
+        lowerDetails.includes("402") ||
+        lowerDetails.includes("403")
+      ) {
+        return true;
+      }
+    }
+  }
+
+  // Inspect error message string
+  const message = err instanceof Error ? err.message : String(err);
+  const lowerMsg = message.toLowerCase();
+
+  const indicators = [
+    "429",
+    "resource_exhausted",
+    "quota",
+    "rate limit",
+    "rate_limit",
+    "401",
+    "402",
+    "403",
+    "api_key",
+    "api key",
+    "unauthorized",
+    "unauthenticated",
+    "not found",
+    "unsupported llm_provider",
+  ];
+
+  return indicators.some((indicator) => lowerMsg.includes(indicator));
+}
+
+/**
+ * Execute a check with a single retry for transient/validation errors.
+ * Immediately throws quota, rate-limit, and auth errors without retrying.
  */
 async function checkSegmentWithRetry(
   text: string,
@@ -253,23 +343,14 @@ async function checkSegmentWithRetry(
       const error = err instanceof Error ? err : new Error(String(err));
       lastError = error;
 
-      // Fail fast on authentication, quota, model not found, or config errors
-      const msg = error.message.toLowerCase();
-      if (
-        msg.includes("api_key") ||
-        msg.includes("api key") ||
-        msg.includes("quota") ||
-        msg.includes("resource_exhausted") ||
-        msg.includes("not found") ||
-        msg.includes("unauthorized") ||
-        msg.includes("unsupported llm_provider")
-      ) {
+      // Fail fast immediately on non-retryable errors (quota, rate-limit, 429, auth, etc.)
+      if (isNonRetryableError(err)) {
         throw error;
       }
 
       if (attempt === 1) {
-        // Wait 300ms before retrying once
-        await new Promise((res) => setTimeout(res, 300));
+        // Wait approximately 1000ms before retrying once for transient/validation errors
+        await new Promise((res) => setTimeout(res, 1000));
       }
     }
   }
@@ -407,8 +488,8 @@ export async function runCheck(
   // Handle inputs > 1,500 characters: Split by paragraph boundaries
   const chunks = splitIntoParagraphChunks(text, 1500);
 
-  // Maximum 3 concurrent requests
-  const chunkResults = await runWithConcurrency(chunks, 3, async (chunk) => {
+  // Process chunks sequentially (concurrency 1) to avoid triggering API rate limits
+  const chunkResults = await runWithConcurrency(chunks, 1, async (chunk) => {
     if (!chunk.text.trim()) {
       return {
         language: "English",
