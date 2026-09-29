@@ -85,7 +85,7 @@ async function callLLMProvider(
         ? { httpOptions: { baseUrl: process.env.LLM_BASE_URL } }
         : {}),
     });
-    const model = process.env.LLM_MODEL || "gemini-3.8-flash";
+    const model = process.env.LLM_MODEL || "gemini-3.5-flash";
 
     const response = await ai.models.generateContent({
       model,

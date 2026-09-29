@@ -62,7 +62,7 @@ WriteWise accepts arbitrary text (from a single sentence to technical manuals, c
        ├── Mode-aware System Prompt (lib/prompt.ts)
        ├── Paragraph Boundary Chunking (>1500 chars, max 3 concurrent)
        │
-       └──► [ Google Gemini API (gemini-3.8-flash via @google/genai) ]
+       └──► [ Google Gemini API (gemini-3.5-flash via @google/genai) ]
        │
        ▼ (Strict Zod Validation with 1-Attempt Retry)
 [ JSON Response { language, correctedText, issues, score } ]
@@ -149,7 +149,7 @@ Open `.env.local` and add your Gemini credentials:
 ```ini
 LLM_PROVIDER=gemini
 LLM_API_KEY=your_gemini_api_key_here
-LLM_MODEL=gemini-3.8-flash
+LLM_MODEL=gemini-3.5-flash
 LLM_BASE_URL=
 ```
 
@@ -171,7 +171,7 @@ Open [http://localhost:3000](http://localhost:3000) in your web browser.
 | :--- | :---: | :--- | :--- |
 | `LLM_PROVIDER` | No | Target provider (`gemini` or `openai-compatible`). Defaults to `gemini`. | `gemini` |
 | `LLM_API_KEY` | **Yes** | Secret API key for Google Gemini. Kept strictly on the server. | `AIzaSy...` |
-| `LLM_MODEL` | No | Gemini model identifier. Defaults to `gemini-3.8-flash`. | `gemini-3.8-flash` |
+| `LLM_MODEL` | No | Gemini model identifier. Defaults to `gemini-3.5-flash`. | `gemini-3.5-flash` |
 | `LLM_BASE_URL` | No | Optional custom base URL if using a proxy or custom endpoint. | *(empty)* |
 
 ---
@@ -222,7 +222,7 @@ WriteWise is optimized for instantaneous deployment to Vercel without Docker or 
    Under **Settings > Environment Variables**, add the following keys for Production and Preview:
    - `LLM_PROVIDER`: `gemini`
    - `LLM_API_KEY`: Your Gemini API key (e.g., `AIzaSy...`)
-   - `LLM_MODEL`: `gemini-3.8-flash`
+   - `LLM_MODEL`: `gemini-3.5-flash`
    - *(Optional)* `LLM_BASE_URL`: Leave empty unless routing through a proxy
 4. **Deploy**:
    Click **Deploy**. Next.js will build the production static pages and serverless API route.
